@@ -9,7 +9,7 @@ on:
 
 env:
   NODE_VERSION: "18"
-  GO_VERSION: "1.21"
+  GO_VERSION: "1.24"
 
 jobs:
   # ブランチ名チェック（mainへのPRは develop/ から始まる必要がある）
