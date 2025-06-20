@@ -1,0 +1,134 @@
+# Docker Compose configuration for App Template
+
+services:
+  # MySQL データベース
+  mysql:
+    image: mysql:8.0
+    container_name: app_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: app_db
+      MYSQL_USER: app_user
+      MYSQL_PASSWORD: password
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./database/init:/docker-entrypoint-initdb.d
+    command: --default-authentication-plugin=mysql_native_password
+    networks:
+      - app_network
+
+  # Redis (セッション、キャッシュ用)
+  redis:
+    image: redis:7.2-alpine
+    container_name: app_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - app_network
+
+  # Go Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    container_name: app_backend
+    ports:
+      - "8080:8080"
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: app_user
+      DB_PASSWORD: password
+      DB_NAME: app_db
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: your-secret-key-here
+    volumes:
+      - ./backend:/app
+      - go_modules:/go/pkg/mod
+    depends_on:
+      - mysql
+      - redis
+    networks:
+      - app_network
+    command: air -c .air.toml
+
+  # Next.js Frontend (開発環境)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: app_frontend
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8080
+    volumes:
+      - ./frontend:/app
+      - node_modules:/app/node_modules
+    depends_on:
+      - backend
+    networks:
+      - app_network
+    profiles:
+      - dev
+
+  # Nginx リバースプロキシ (本番環境)
+  nginx:
+    image: nginx:alpine
+    container_name: app_nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - frontend_build:/usr/share/nginx/html:ro
+    depends_on:
+      - backend
+    networks:
+      - app_network
+    profiles:
+      - prod
+
+  # Frontend Builder (本番環境用)
+  frontend-builder:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: app_frontend_builder
+    volumes:
+      - frontend_build:/app/out
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_BASE_URL: http://localhost
+    networks:
+      - app_network
+    profiles:
+      - prod
+
+  # Swagger UI
+  swagger-ui:
+    image: swaggerapi/swagger-ui
+    container_name: app_swagger
+    ports:
+      - "8081:8080"
+    environment:
+      SWAGGER_JSON: /api/openapi.yml
+    volumes:
+      - ./api:/api
+    networks:
+      - app_network
+
+volumes:
+  mysql_data:
+  redis_data:
+  go_modules:
+  node_modules:
+  frontend_build:
+
+networks:
+  app_network:
+    driver: bridge
