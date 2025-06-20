@@ -1,0 +1,15 @@
+{
+  "name": "api-specification",
+  "version": "1.0.0",
+  "description": "OpenAPI specification for web application template",
+  "scripts": {
+    "merge": "swagger-merger -i index.yml -o openapi.yml",
+    "validate": "swagger-codegen validate -i openapi.yml",
+    "serve": "swagger-ui-serve openapi.yml"
+  },
+  "devDependencies": {
+    "swagger-merger": "^1.0.0",
+    "swagger-codegen-cli": "^3.0.34",
+    "swagger-ui-serve": "^0.1.1"
+  }
+}

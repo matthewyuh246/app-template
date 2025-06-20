@@ -1,0 +1,57 @@
+openapi: 3.0.3
+info:
+  $ref: "./info/info.yml"
+
+servers:
+  - url: http://localhost:8080
+    description: 開発サーバー
+  - url: https://api.example.com
+    description: 本番サーバー
+
+paths:
+  # Health Check
+  /health:
+    $ref: "./paths/health.yml"
+
+  # Authentication
+  /auth/register:
+    $ref: "./paths/auth.yml#/register"
+  /auth/login:
+    $ref: "./paths/auth.yml#/login"
+
+  # Users
+  /users:
+    $ref: "./paths/users.yml#/users"
+  "/users/{id}":
+    $ref: "./paths/users.yml#/userById"
+
+components:
+  schemas:
+    # User related schemas
+    User:
+      $ref: "./components/schemas/user.yml#/User"
+    CreateUserRequest:
+      $ref: "./components/schemas/user.yml#/CreateUserRequest"
+    UpdateUserRequest:
+      $ref: "./components/schemas/user.yml#/UpdateUserRequest"
+
+    # Auth related schemas
+    LoginRequest:
+      $ref: "./components/schemas/auth.yml#/LoginRequest"
+    AuthResponse:
+      $ref: "./components/schemas/auth.yml#/AuthResponse"
+
+    # Common schemas
+    HealthResponse:
+      $ref: "./components/schemas/common.yml#/HealthResponse"
+    UsersResponse:
+      $ref: "./components/schemas/common.yml#/UsersResponse"
+    Pagination:
+      $ref: "./components/schemas/common.yml#/Pagination"
+
+    # Error schemas
+    ErrorResponse:
+      $ref: "./components/schemas/error.yml#/ErrorResponse"
+
+  securitySchemes:
+    $ref: "./components/security/security.yml"

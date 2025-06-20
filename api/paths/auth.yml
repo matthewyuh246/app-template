@@ -1,0 +1,66 @@
+register:
+  post:
+    tags:
+      - auth
+    summary: ユーザー登録
+    description: 新しいユーザーアカウントを作成します
+    operationId: registerUser
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../components/schemas/user.yml#/CreateUserRequest"
+          example:
+            email: "user@example.com"
+            name: "田中太郎"
+            password: "password123"
+    responses:
+      "201":
+        description: 登録成功
+        content:
+          application/json:
+            schema:
+              $ref: "../components/schemas/auth.yml#/AuthResponse"
+      "400":
+        description: バリデーションエラー
+        content:
+          application/json:
+            schema:
+              $ref: "../components/schemas/error.yml#/ErrorResponse"
+            example:
+              error: "メールアドレスが既に使用されています"
+              code: "EMAIL_ALREADY_EXISTS"
+
+login:
+  post:
+    tags:
+      - auth
+    summary: ログイン
+    description: ユーザー認証を行いJWTトークンを発行します
+    operationId: loginUser
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../components/schemas/auth.yml#/LoginRequest"
+          example:
+            email: "user@example.com"
+            password: "password123"
+    responses:
+      "200":
+        description: ログイン成功
+        content:
+          application/json:
+            schema:
+              $ref: "../components/schemas/auth.yml#/AuthResponse"
+      "401":
+        description: 認証失敗
+        content:
+          application/json:
+            schema:
+              $ref: "../components/schemas/error.yml#/ErrorResponse"
+            example:
+              error: "メールアドレスまたはパスワードが正しくありません"
+              code: "INVALID_CREDENTIALS"

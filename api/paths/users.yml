@@ -1,0 +1,166 @@
+users:
+  get:
+    tags:
+      - users
+    summary: ユーザー一覧取得
+    description: ページネーション機能付きでユーザー一覧を取得します
+    operationId: getUsers
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: page
+        in: query
+        description: ページ番号
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+        example: 1
+      - name: limit
+        in: query
+        description: 1ページあたりの件数
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+        example: 20
+    responses:
+      "200":
+        description: 成功
+        content:
+          application/json:
+            schema:
+              $ref: "../components/schemas/common.yml#/UsersResponse"
+      "401":
+        description: 認証が必要
+        content:
+          application/json:
+            schema:
+              $ref: "../components/schemas/error.yml#/ErrorResponse"
+
+userById:
+  get:
+    tags:
+      - users
+    summary: ユーザー詳細取得
+    description: 指定されたIDのユーザー詳細情報を取得します
+    operationId: getUserById
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: ユーザーID
+        schema:
+          type: integer
+          format: int64
+        example: 1
+    responses:
+      "200":
+        description: 成功
+        content:
+          application/json:
+            schema:
+              $ref: "../components/schemas/user.yml#/User"
+      "404":
+        description: ユーザーが見つかりません
+        content:
+          application/json:
+            schema:
+              $ref: "../components/schemas/error.yml#/ErrorResponse"
+            example:
+              error: "ユーザーが見つかりません"
+              code: "USER_NOT_FOUND"
+      "401":
+        description: 認証が必要
+        content:
+          application/json:
+            schema:
+              $ref: "../components/schemas/error.yml#/ErrorResponse"
+
+  put:
+    tags:
+      - users
+    summary: ユーザー更新
+    description: 指定されたIDのユーザー情報を更新します
+    operationId: updateUser
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: ユーザーID
+        schema:
+          type: integer
+          format: int64
+        example: 1
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../components/schemas/user.yml#/UpdateUserRequest"
+          example:
+            name: "佐藤花子"
+            email: "hanako@example.com"
+    responses:
+      "200":
+        description: 更新成功
+        content:
+          application/json:
+            schema:
+              $ref: "../components/schemas/user.yml#/User"
+      "400":
+        description: バリデーションエラー
+        content:
+          application/json:
+            schema:
+              $ref: "../components/schemas/error.yml#/ErrorResponse"
+      "404":
+        description: ユーザーが見つかりません
+        content:
+          application/json:
+            schema:
+              $ref: "../components/schemas/error.yml#/ErrorResponse"
+      "401":
+        description: 認証が必要
+        content:
+          application/json:
+            schema:
+              $ref: "../components/schemas/error.yml#/ErrorResponse"
+
+  delete:
+    tags:
+      - users
+    summary: ユーザー削除
+    description: 指定されたIDのユーザーを削除します
+    operationId: deleteUser
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: ユーザーID
+        schema:
+          type: integer
+          format: int64
+        example: 1
+    responses:
+      "204":
+        description: 削除成功
+      "404":
+        description: ユーザーが見つかりません
+        content:
+          application/json:
+            schema:
+              $ref: "../components/schemas/error.yml#/ErrorResponse"
+      "401":
+        description: 認証が必要
+        content:
+          application/json:
+            schema:
+              $ref: "../components/schemas/error.yml#/ErrorResponse"

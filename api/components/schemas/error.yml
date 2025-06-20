@@ -1,0 +1,22 @@
+ErrorResponse:
+  type: object
+  description: エラーレスポンス
+  properties:
+    error:
+      type: string
+      description: エラーメッセージ
+      example: "リクエストが正しくありません"
+    code:
+      type: string
+      description: エラーコード
+      example: "VALIDATION_ERROR"
+      enum:
+        - "VALIDATION_ERROR"
+        - "EMAIL_ALREADY_EXISTS"
+        - "INVALID_CREDENTIALS"
+        - "USER_NOT_FOUND"
+        - "MISSING_AUTH_HEADER"
+        - "INVALID_AUTH_FORMAT"
+        - "INVALID_TOKEN"
+        - "TOKEN_EXPIRED"
+        - "INTERNAL_ERROR"

@@ -1,0 +1,47 @@
+HealthResponse:
+  type: object
+  description: ヘルスチェックレスポンス
+  properties:
+    status:
+      type: string
+      description: ステータス
+      example: "ok"
+    timestamp:
+      type: string
+      format: date-time
+      description: 現在時刻
+      example: "2023-12-01T10:00:00Z"
+
+UsersResponse:
+  type: object
+  description: ユーザー一覧レスポンス
+  properties:
+    users:
+      type: array
+      description: ユーザーリスト
+      items:
+        $ref: "./user.yml#/User"
+    pagination:
+      $ref: "#/Pagination"
+      description: ページネーション情報
+
+Pagination:
+  type: object
+  description: ページネーション情報
+  properties:
+    page:
+      type: integer
+      description: 現在のページ番号
+      example: 1
+    limit:
+      type: integer
+      description: 1ページあたりの件数
+      example: 20
+    total:
+      type: integer
+      description: 総件数
+      example: 100
+    totalPages:
+      type: integer
+      description: 総ページ数
+      example: 5

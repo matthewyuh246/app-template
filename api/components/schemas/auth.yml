@@ -1,0 +1,28 @@
+LoginRequest:
+  type: object
+  description: ログインリクエスト
+  required:
+    - email
+    - password
+  properties:
+    email:
+      type: string
+      format: email
+      description: メールアドレス
+      example: "user@example.com"
+    password:
+      type: string
+      description: パスワード
+      example: "password123"
+
+AuthResponse:
+  type: object
+  description: 認証レスポンス
+  properties:
+    user:
+      $ref: "./user.yml#/User"
+      description: ユーザー情報
+    token:
+      type: string
+      description: JWTアクセストークン
+      example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
