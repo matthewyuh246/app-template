@@ -1,0 +1,32 @@
+FROM golang:1.24-alpine
+
+# 必要なパッケージをインストール
+RUN apk add --no-cache git curl
+
+# Airをインストール (ホットリロード用)
+RUN go install github.com/air-verse/air@latest
+
+# SQLBoilerをインストール
+RUN go install github.com/volatiletech/sqlboiler/v4@latest
+RUN go install github.com/volatiletech/sqlboiler/v4/drivers/sqlboiler-mysql@latest
+
+# 作業ディレクトリを設定
+WORKDIR /app
+
+# Go modulesファイルをコピー
+COPY go.mod go.sum ./
+
+# 依存関係をダウンロード
+RUN go mod download
+
+# ソースコードをコピー
+COPY . .
+
+# Airの設定ファイルをコピー
+COPY .air.toml .
+
+# ポートを公開
+EXPOSE 8080
+
+# Airでアプリケーションを起動
+CMD ["air", "-c", ".air.toml"] 
