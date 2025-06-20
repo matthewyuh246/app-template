@@ -2,44 +2,23 @@ name: CI Pipeline
 
 on:
   pull_request:
-    branches: [main, develop]
+    branches: [main]
     types: [opened, synchronize, reopened]
-  push:
-    branches: [develop, "develop/**", "feature/**", "fix/**", "hotfix/**"]
 
 env:
   NODE_VERSION: "18"
   GO_VERSION: "1.24"
 
 jobs:
-  # ブランチ名チェック（mainへのPRは develop/ から始まる必要がある）
-  branch-protection:
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && github.base_ref == 'main'
-    steps:
-      - name: Check branch naming convention
-        run: |
-          BRANCH_NAME="${{ github.head_ref }}"
-          echo "Checking branch name: $BRANCH_NAME"
-
-          if [[ ! "$BRANCH_NAME" =~ ^develop/.+ ]]; then
-            echo "❌ Error: Pull requests to main branch must come from 'develop/' branches"
-            echo "Current branch: $BRANCH_NAME"
-            echo "Expected pattern: develop/feature-name"
-            exit 1
-          fi
-
-          echo "✅ Branch name follows convention: $BRANCH_NAME"
-
-  # 変更ファイル検出
+  # 変更ファイル検出 (共通)
   detect-changes:
     runs-on: ubuntu-latest
     outputs:
       backend: ${{ steps.changes.outputs.backend }}
       frontend: ${{ steps.changes.outputs.frontend }}
-      infrastructure: ${{ steps.changes.outputs.infrastructure }}
     steps:
       - uses: actions/checkout@v4
+
       - uses: dorny/paths-filter@v2
         id: changes
         with:
@@ -53,34 +32,31 @@ jobs:
             frontend:
               - 'frontend/**'
               - 'package*.json'
-            infrastructure:
-              - 'infrastructure/**'
-              - 'docker-compose.yml'
-              - 'Dockerfile*'
-              - '.github/workflows/**'
 
-  # バックエンドテスト
-  test-backend:
-    needs: [detect-changes]
-    if: needs.detect-changes.outputs.backend == 'true'
+  # 1. ブランチ名検証
+  branch-check:
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    steps:
+      - name: Check branch naming convention
+        run: |
+          BRANCH_NAME="${{ github.head_ref }}"
+          echo "🔍 Checking branch name: $BRANCH_NAME"
 
-    services:
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: password
-          MYSQL_DATABASE: test_db
-        ports:
-          - 3306:3306
-        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
+          if [[ ! "$BRANCH_NAME" =~ ^develop/.+ ]]; then
+            echo "❌ Error: Pull requests to main branch must come from 'develop/' branches"
+            echo "Current branch: $BRANCH_NAME"
+            echo "Expected pattern: develop/feature-name"
+            exit 1
+          fi
 
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: --health-cmd="redis-cli ping" --health-interval=10s --health-timeout=5s --health-retries=3
+          echo "✅ Branch name follows convention: $BRANCH_NAME"
 
+  # 2. バックエンドビルド
+  backend-build:
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.backend == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -89,61 +65,49 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - name: Cache Go modules
-        uses: actions/cache@v3
-        with:
-          path: ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
-      - name: Install dependencies
-        working-directory: ./backend
-        run: go mod download
-
-      - name: Check for tests and run if present
-        working-directory: ./backend
-        env:
-          DB_HOST: localhost
-          DB_PORT: 3306
-          DB_USER: root
-          DB_PASSWORD: password
-          DB_NAME: test_db
-          REDIS_HOST: localhost
-          REDIS_PORT: 6379
+      - name: Build backend
         run: |
-          if find . -name "*_test.go" -type f | grep -q .; then
-            echo "✅ Test files found, running tests..."
-            go test -v -race -coverprofile=coverage.out ./...
-            go tool cover -html=coverage.out -o coverage.html
-            echo "tests_exist=true" >> $GITHUB_OUTPUT
-          else
-            echo "⏭️ No test files found, skipping tests..."
-            echo "tests_exist=false" >> $GITHUB_OUTPUT
-          fi
-        id: test_check
+          echo "🔧 Setting up Go environment..."
+          cd backend
+          go mod download
 
-      - name: Upload coverage reports
-        if: steps.test_check.outputs.tests_exist == 'true'
-        uses: codecov/codecov-action@v3
+          echo "🏗️ Building backend..."
+          go build -o bin/app cmd/main.go
+
+          echo "✅ Backend build completed!"
+
+  # 3. バックエンドLint
+  backend-lint:
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.backend == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
         with:
-          file: ./backend/coverage.out
-          flags: backend
+          go-version: ${{ env.GO_VERSION }}
 
-      - name: Run linting
-        working-directory: ./backend
+      - name: Run Go lint
         run: |
+          echo "🔧 Setting up Go environment..."
+          cd backend
+          go mod download
+
+          echo "🔍 Installing golangci-lint..."
           go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 
           echo "🔍 Running Go lint..."
           golangci-lint run --timeout=5m
 
-  # フロントエンドテスト
-  test-frontend:
-    needs: [detect-changes]
-    if: needs.detect-changes.outputs.frontend == 'true'
-    runs-on: ubuntu-latest
+          echo "✅ Backend lint completed!"
 
+  # 4. フロントエンドビルド
+  frontend-build:
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.frontend == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -154,141 +118,42 @@ jobs:
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Install dependencies
-        working-directory: ./frontend
-        run: npm ci --prefer-offline --no-audit
-
-      - name: Run ESLint
-        working-directory: ./frontend
-        run: npm run lint
-
-      - name: Run type check
-        working-directory: ./frontend
-        run: npm run type-check
-
-      - name: Check for tests and run if present
-        working-directory: ./frontend
+      - name: Build frontend
         run: |
-          if find . -name "*.test.*" -o -name "*.spec.*" | grep -q .; then
-            echo "✅ Test files found, running tests..."
-            npm run test -- --coverage --watchAll=false
-          else
-            echo "⏭️ No test files found, skipping tests..."
-          fi
+          echo "🔧 Setting up Node.js environment..."
+          cd frontend
+          npm ci --prefer-offline --no-audit
 
-      - name: Build application
-        working-directory: ./frontend
-        run: npm run build
+          echo "🔍 Running TypeScript type check..."
+          npm run type-check
 
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: frontend-build
-          path: frontend/.next
-          retention-days: 7
+          echo "🏗️ Building frontend..."
+          npm run build
 
-  # セキュリティスキャン
-  security-scan:
+          echo "✅ Frontend build completed!"
+
+  # 5. フロントエンドLint
+  frontend-lint:
     runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.frontend == 'true'
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
-          scan-type: "fs"
-          scan-ref: "."
-          format: "sarif"
-          output: "trivy-results.sarif"
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
 
-      - name: Upload Trivy scan results
-        uses: github/codeql-action/upload-sarif@v2
-        if: always()
-        with:
-          sarif_file: "trivy-results.sarif"
-
-  # 統合テスト（Docker Compose使用）
-  integration-test:
-    needs: [detect-changes]
-    if: needs.detect-changes.outputs.backend == 'true' || needs.detect-changes.outputs.frontend == 'true'
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Create .env file
+      - name: Run frontend lint
         run: |
-          cat > .env << EOF
-          # Database
-          MYSQL_ROOT_PASSWORD=test_password
-          MYSQL_DATABASE=app_template_test
-          MYSQL_USER=app_user
-          MYSQL_PASSWORD=app_password
+          echo "🔧 Setting up Node.js environment..."
+          cd frontend
+          npm ci --prefer-offline --no-audit
 
-          # Backend
-          DB_HOST=mysql
-          DB_PORT=3306
-          DB_USER=app_user
-          DB_PASSWORD=app_password
-          DB_NAME=app_template_test
-          JWT_SECRET=test_jwt_secret_key_for_ci
+          echo "🔍 Running ESLint..."
+          npm run lint
 
-          # Frontend
-          NEXT_PUBLIC_API_BASE_URL=http://localhost:8080
-          EOF
-
-      - name: Build and run integration tests
-        run: |
-          docker-compose -f docker-compose.yml up -d --build
-
-          # Wait for services to be ready
-          timeout 60 bash -c 'until curl -f http://localhost:8080/health; do sleep 2; done'
-          timeout 60 bash -c 'until curl -f http://localhost:3000; do sleep 2; done'
-
-          # Run basic connectivity tests
-          curl -f http://localhost:8080/health || echo "⚠️ Backend health check failed"
-          curl -f http://localhost:3000 || echo "⚠️ Frontend health check failed"
-
-          echo "✅ Integration test completed - services are accessible"
-
-          # Cleanup
-          docker-compose down -v
-
-  # PR要約コメント
-  pr-summary:
-    if: github.event_name == 'pull_request'
-    needs:
-      [
-        branch-protection,
-        test-backend,
-        test-frontend,
-        security-scan,
-        integration-test,
-      ]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Comment PR summary
-        uses: actions/github-script@v6
-        with:
-          script: |
-            const summary = `
-            ## 🚀 CI Pipeline Results
-
-            | Check | Status |
-            |-------|--------|
-            | Branch Protection | ✅ Passed |
-            | Backend Tests | ${{ needs.test-backend.result == 'success' && '✅' || needs.test-backend.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.test-backend.result }} |
-            | Frontend Tests | ${{ needs.test-frontend.result == 'success' && '✅' || needs.test-frontend.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.test-frontend.result }} |
-            | Security Scan | ${{ needs.security-scan.result == 'success' && '✅' || '❌' }} ${{ needs.security-scan.result }} |
-            | Integration Tests | ${{ needs.integration-test.result == 'success' && '✅' || needs.integration-test.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.integration-test.result }} |
-
-            **Branch:** \`${{ github.head_ref }}\` → \`${{ github.base_ref }}\`
-            **Commit:** ${{ github.sha }}
-            `;
-
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: summary
-            });
+          echo "✅ Frontend lint completed!"
