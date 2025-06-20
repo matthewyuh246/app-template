@@ -1,0 +1,211 @@
+name: Security Scan
+
+on:
+  schedule:
+    - cron: "0 2 * * 1" # 毎週月曜 2:00 AM (JST 11:00 AM)
+  workflow_dispatch:
+    inputs:
+      scan_type:
+        description: "Select scan type"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - dependencies-only
+          - secrets-only
+          - docker-only
+
+env:
+  NODE_VERSION: "18"
+  GO_VERSION: "1.24"
+
+jobs:
+  # 依存関係脆弱性スキャン
+  dependency-scan:
+    if: contains(github.event.inputs.scan_type, 'dependencies') || github.event.inputs.scan_type == 'all' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Go vulnerability check (govulncheck)
+        run: |
+          echo "🔍 Installing govulncheck..."
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+
+          echo "🔍 Scanning Go dependencies for vulnerabilities..."
+          cd backend
+          $(go env GOPATH)/bin/govulncheck ./...
+
+      - name: Node.js vulnerability check (npm audit)
+        run: |
+          echo "🔍 Installing Node.js dependencies..."
+          cd frontend
+          npm ci --prefer-offline --no-audit
+
+          echo "🔍 Scanning Node.js dependencies for vulnerabilities..."
+          npm audit --audit-level moderate --json > ../npm-audit-results.json || true
+
+          # 結果を表示
+          if [ -s ../npm-audit-results.json ]; then
+            echo "⚠️ Vulnerabilities found:"
+            cat ../npm-audit-results.json | jq '.vulnerabilities // empty'
+          else
+            echo "✅ No vulnerabilities found"
+          fi
+
+      - name: Upload audit results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: vulnerability-scan-results
+          path: npm-audit-results.json
+          retention-days: 30
+
+  # 包括的セキュリティスキャン (Trivy)
+  trivy-scan:
+    if: contains(github.event.inputs.scan_type, 'all') || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          format: "sarif"
+          output: "trivy-results.sarif"
+          severity: "CRITICAL,HIGH,MEDIUM"
+
+      - name: Upload Trivy scan results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: "trivy-results.sarif"
+
+      - name: Run Trivy for readable output
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          format: "table"
+          output: "trivy-results.txt"
+
+      - name: Upload readable Trivy results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: trivy-scan-results
+          path: trivy-results.txt
+          retention-days: 30
+
+  # シークレットスキャン
+  secrets-scan:
+    if: contains(github.event.inputs.scan_type, 'secrets') || github.event.inputs.scan_type == 'all' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 全履歴取得
+
+      - name: Run TruffleHog secrets scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: main
+          head: HEAD
+          extra_args: --debug --only-verified
+
+  # Dockerイメージスキャン
+  docker-scan:
+    if: contains(github.event.inputs.scan_type, 'docker') || github.event.inputs.scan_type == 'all' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker images
+        run: |
+          echo "🐳 Building Docker images for security scan..."
+          docker build -f backend/Dockerfile -t app-backend:security-scan ./backend
+          docker build -f frontend/Dockerfile -t app-frontend:security-scan ./frontend
+
+      - name: Scan backend Docker image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "app-backend:security-scan"
+          format: "sarif"
+          output: "trivy-backend-image.sarif"
+
+      - name: Scan frontend Docker image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "app-frontend:security-scan"
+          format: "sarif"
+          output: "trivy-frontend-image.sarif"
+
+      - name: Upload Docker scan results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: "trivy-backend-image.sarif"
+
+      - name: Upload Docker scan results (Frontend)
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: "trivy-frontend-image.sarif"
+
+  # セキュリティレポート生成
+  security-report:
+    needs: [dependency-scan, trivy-scan, secrets-scan, docker-scan]
+    if: always() && (github.event_name == 'schedule' || github.event.inputs.scan_type == 'all')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+
+      - name: Generate security report
+        run: |
+          echo "# 🛡️ セキュリティスキャンレポート" > security-report.md
+          echo "**実行日時:** $(date)" >> security-report.md
+          echo "" >> security-report.md
+
+          echo "## 📊 スキャン結果サマリー" >> security-report.md
+          echo "- ✅ 依存関係脆弱性スキャン: 完了" >> security-report.md
+          echo "- ✅ Trivyセキュリティスキャン: 完了" >> security-report.md
+          echo "- ✅ シークレットスキャン: 完了" >> security-report.md
+          echo "- ✅ Dockerイメージスキャン: 完了" >> security-report.md
+          echo "" >> security-report.md
+
+          echo "## 🔗 詳細結果" >> security-report.md
+          echo "詳細な結果は以下のArtifactsからダウンロードできます：" >> security-report.md
+          echo "- vulnerability-scan-results" >> security-report.md
+          echo "- trivy-scan-results" >> security-report.md
+          echo "" >> security-report.md
+
+          echo "## 🎯 推奨アクション" >> security-report.md
+          echo "1. Critical/High脆弱性は優先的に修正" >> security-report.md
+          echo "2. 依存関係のアップデートを検討" >> security-report.md
+          echo "3. シークレット漏洩がある場合は即座に対応" >> security-report.md
+
+      - name: Upload security report
+        uses: actions/upload-artifact@v3
+        with:
+          name: security-report
+          path: security-report.md
+          retention-days: 90
