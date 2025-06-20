@@ -9,7 +9,7 @@ on:
 
 env:
   NODE_VERSION: "18"
-  GO_VERSION: "1.21"
+  GO_VERSION: "1.24"
 
 jobs:
   # ブランチ名チェック（mainへのPRは develop/ から始まる必要がある）
@@ -134,6 +134,8 @@ jobs:
         working-directory: ./backend
         run: |
           go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+
+          echo "🔍 Running Go lint..."
           golangci-lint run --timeout=5m
 
   # フロントエンドテスト
