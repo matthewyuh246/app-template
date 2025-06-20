@@ -1,0 +1,16 @@
+get:
+  tags:
+    - health
+  summary: ヘルスチェック
+  description: アプリケーションの稼働状況を確認します
+  operationId: healthCheck
+  responses:
+    "200":
+      description: 正常
+      content:
+        application/json:
+          schema:
+            $ref: "../components/schemas/common.yml#/HealthResponse"
+          example:
+            status: "ok"
+            timestamp: "2023-12-01T10:00:00Z"
