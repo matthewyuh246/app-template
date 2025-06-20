@@ -1,0 +1,204 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # 手動実行も許可
+
+env:
+  NODE_VERSION: "18"
+  GO_VERSION: "1.21"
+
+jobs:
+  # 最終チェック
+  pre-deploy-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 全履歴を取得
+
+      - name: Verify merge from develop branch
+        run: |
+          # 最新コミットがdevelop/からのマージかチェック
+          LAST_COMMIT_MESSAGE=$(git log -1 --pretty=format:"%s")
+          echo "Last commit: $LAST_COMMIT_MESSAGE"
+
+          if [[ "$LAST_COMMIT_MESSAGE" =~ ^Merge\ pull\ request.*develop/.* ]]; then
+            echo "✅ Deploy from develop/ branch merge confirmed"
+          else
+            echo "⚠️  Warning: Deploy not from develop/ branch merge"
+            echo "This might be a direct push or emergency hotfix"
+          fi
+
+      - name: Check for breaking changes
+        run: |
+          # APIスキーマの変更をチェック
+          if git diff HEAD~1 --name-only | grep -E "(api/|openapi\.yml)"; then
+            echo "⚠️  API changes detected - ensure backward compatibility"
+          fi
+
+  # ビルドとテスト
+  build-and-test:
+    runs-on: ubuntu-latest
+    needs: [pre-deploy-checks]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install frontend dependencies
+        working-directory: ./frontend
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Build frontend for production
+        working-directory: ./frontend
+        env:
+          NODE_ENV: production
+        run: npm run build
+
+      - name: Build backend for production
+        working-directory: ./backend
+        run: |
+          go mod download
+          CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main ./cmd/main.go
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: production-build
+          path: |
+            frontend/.next/
+            backend/main
+          retention-days: 30
+
+  # セキュリティチェック
+  security-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run dependency vulnerability scan
+        run: |
+          # Go dependencies
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          cd backend && govulncheck ./...
+
+          # Node.js dependencies
+          cd frontend && npm audit --audit-level moderate
+
+      - name: Run secrets scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: main
+          head: HEAD
+
+  # デプロイ
+  deploy:
+    needs: [build-and-test, security-check]
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: production-build
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION || 'ap-northeast-1' }}
+
+      - name: Deploy to AWS ECS/EKS
+        run: |
+          echo "🚀 Starting deployment to production..."
+
+          # Docker イメージをビルドしてECRにプッシュ
+          aws ecr get-login-password --region ${{ secrets.AWS_REGION || 'ap-northeast-1' }} | docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY }}
+
+          # Backend image
+          docker build -t ${{ secrets.ECR_REGISTRY }}/app-template-backend:${{ github.sha }} -f backend/Dockerfile .
+          docker push ${{ secrets.ECR_REGISTRY }}/app-template-backend:${{ github.sha }}
+
+          # Frontend image  
+          docker build -t ${{ secrets.ECR_REGISTRY }}/app-template-frontend:${{ github.sha }} -f frontend/Dockerfile .
+          docker push ${{ secrets.ECR_REGISTRY }}/app-template-frontend:${{ github.sha }}
+
+          echo "✅ Docker images pushed successfully"
+
+      - name: Update ECS service
+        run: |
+          # ECSサービスの更新
+          aws ecs update-service \
+            --cluster ${{ secrets.ECS_CLUSTER_NAME }} \
+            --service ${{ secrets.ECS_SERVICE_NAME }} \
+            --force-new-deployment
+
+          # デプロイメント完了を待機
+          aws ecs wait services-stable \
+            --cluster ${{ secrets.ECS_CLUSTER_NAME }} \
+            --services ${{ secrets.ECS_SERVICE_NAME }}
+
+          echo "✅ ECS service updated successfully"
+
+      - name: Run smoke tests
+        run: |
+          # 本番環境でのスモークテスト
+          PROD_URL="${{ secrets.PRODUCTION_URL }}"
+
+          echo "Running smoke tests against $PROD_URL"
+
+          # ヘルスチェック
+          curl -f "$PROD_URL/health" || exit 1
+
+          # 基本的なエンドポイントチェック
+          curl -f "$PROD_URL" || exit 1
+
+          echo "✅ Smoke tests passed"
+
+      - name: Create deployment record
+        run: |
+          # デプロイメント記録をSlackやDatadogに送信
+          curl -X POST -H 'Content-type: application/json' \
+            --data "{\"text\":\"🚀 Production deployment completed\n**Commit:** ${{ github.sha }}\n**Version:** $(date '+%Y%m%d-%H%M%S')\n**Status:** Success\"}" \
+            ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  # 失敗時のロールバック
+  rollback:
+    if: failure()
+    needs: [deploy]
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Emergency rollback
+        run: |
+          echo "🔄 Starting emergency rollback..."
+
+          # 前のバージョンに戻す
+          aws ecs update-service \
+            --cluster ${{ secrets.ECS_CLUSTER_NAME }} \
+            --service ${{ secrets.ECS_SERVICE_NAME }} \
+            --task-definition ${{ secrets.PREVIOUS_TASK_DEFINITION }}
+
+          # Slackに通知
+          curl -X POST -H 'Content-type: application/json' \
+            --data "{\"text\":\"⚠️ Emergency rollback executed\n**Commit:** ${{ github.sha }}\n**Reason:** Deployment failure\"}" \
+            ${{ secrets.SLACK_WEBHOOK_URL }}

@@ -1,0 +1,69 @@
+# CI/CDワークフロー設定
+# このファイルはGitHub Actionsで読み込まれる設定値を管理します
+
+# 基本設定
+versions:
+  node: "18"
+  go: "1.21"
+  python: "3.11"
+
+# ブランチ設定
+branches:
+  main: "main"
+  develop: "develop"
+  feature_prefix: "develop/"
+  allowed_patterns:
+    - "develop/**"
+    - "feature/**"
+    - "fix/**"
+    - "hotfix/**"
+    - "release/**"
+
+# テスト設定
+test:
+  timeout_minutes: 30
+  coverage_threshold: 80
+  parallel_jobs: 4
+
+# セキュリティ設定
+security:
+  vulnerability_scan: true
+  secret_scan: true
+  dependency_check: true
+  code_quality_check: true
+
+# 通知設定
+notifications:
+  slack:
+    enabled: true
+    success_channel: "#deployments"
+    failure_channel: "#alerts"
+  email:
+    enabled: false
+
+# デプロイ設定
+deploy:
+  production:
+    manual_approval: true
+    smoke_tests: true
+    rollback_enabled: true
+  staging:
+    auto_deploy: true
+    from_branch: "develop"
+
+# モニタリング設定
+monitoring:
+  performance_budget:
+    frontend_build_size_mb: 5
+    api_response_time_ms: 500
+  health_checks:
+    endpoints:
+      - "/health"
+      - "/api/v1/health"
+    timeout_seconds: 30
+
+# キャッシュ設定
+cache:
+  node_modules_ttl_days: 7
+  go_modules_ttl_days: 7
+  docker_layers_ttl_days: 3

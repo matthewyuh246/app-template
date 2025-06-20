@@ -1,0 +1,206 @@
+name: Setup Branch Protection
+
+on:
+  workflow_dispatch: # 手動実行
+  push:
+    branches: [main]
+    paths: [".github/workflows/branch-protection.yml"]
+
+jobs:
+  setup-branch-protection:
+    runs-on: ubuntu-latest
+    if: github.repository_owner != 'github' # デモ用の制限
+
+    steps:
+      - name: Setup branch protection for main
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+
+            try {
+              await github.rest.repos.updateBranchProtection({
+                owner,
+                repo,
+                branch: 'main',
+                required_status_checks: {
+                  strict: true,
+                  contexts: [
+                    'branch-protection',
+                    'test-backend',
+                    'test-frontend', 
+                    'security-scan',
+                    'integration-test'
+                  ]
+                },
+                enforce_admins: false,
+                required_pull_request_reviews: {
+                  dismiss_stale_reviews: true,
+                  require_code_owner_reviews: true,
+                  required_approving_review_count: 1,
+                  bypass_pull_request_allowances: {
+                    users: [],
+                    teams: [],
+                    apps: []
+                  }
+                },
+                restrictions: null,
+                allow_force_pushes: false,
+                allow_deletions: false,
+                block_creations: false,
+                required_conversation_resolution: true
+              });
+              
+              console.log('✅ Branch protection rules updated for main branch');
+            } catch (error) {
+              console.error('❌ Failed to update branch protection:', error.message);
+              
+              // 既存のルールを確認
+              try {
+                const protection = await github.rest.repos.getBranchProtection({
+                  owner,
+                  repo,
+                  branch: 'main'
+                });
+                console.log('Current protection rules:', protection.data);
+              } catch (e) {
+                console.log('No existing protection rules found');
+              }
+              
+              throw error;
+            }
+
+      - name: Setup branch protection for develop
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+
+            try {
+              await github.rest.repos.updateBranchProtection({
+                owner,
+                repo,
+                branch: 'develop',
+                required_status_checks: {
+                  strict: true,
+                  contexts: [
+                    'test-backend',
+                    'test-frontend',
+                    'security-scan'
+                  ]
+                },
+                enforce_admins: false,
+                required_pull_request_reviews: {
+                  dismiss_stale_reviews: true,
+                  require_code_owner_reviews: false,
+                  required_approving_review_count: 1,
+                  bypass_pull_request_allowances: {
+                    users: [],
+                    teams: [],
+                    apps: []
+                  }
+                },
+                restrictions: null,
+                allow_force_pushes: false,
+                allow_deletions: false,
+                block_creations: false,
+                required_conversation_resolution: true
+              });
+              
+              console.log('✅ Branch protection rules updated for develop branch');
+            } catch (error) {
+              console.error('❌ Failed to update branch protection:', error.message);
+              
+              if (error.status === 404) {
+                console.log('ℹ️  develop branch does not exist yet - protection will be applied when created');
+              } else {
+                throw error;
+              }
+            }
+
+      - name: Create CODEOWNERS file
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+
+            const codeownersContent = `# コードオーナー設定
+            # 詳細: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+            # デフォルト（全ファイル）
+            * @${owner}
+
+            # バックエンド
+            /backend/ @${owner}
+            /api/ @${owner}
+            /database/ @${owner}
+
+            # フロントエンド  
+            /frontend/ @${owner}
+
+            # インフラ・CI/CD
+            /infrastructure/ @${owner}
+            /.github/ @${owner}
+            /docker-compose.yml @${owner}
+            /Dockerfile* @${owner}
+
+            # ドキュメント
+            /README.md @${owner}
+            /docs/ @${owner}
+            `;
+
+            try {
+              // 既存のCODEOWNERSファイルを確認
+              let sha;
+              try {
+                const existing = await github.rest.repos.getContent({
+                  owner,
+                  repo,
+                  path: '.github/CODEOWNERS'
+                });
+                sha = existing.data.sha;
+              } catch (e) {
+                // ファイルが存在しない場合
+                sha = undefined;
+              }
+              
+              // CODEOWNERSファイルを作成または更新
+              await github.rest.repos.createOrUpdateFileContents({
+                owner,
+                repo,
+                path: '.github/CODEOWNERS',
+                message: 'Add/Update CODEOWNERS file',
+                content: Buffer.from(codeownersContent).toString('base64'),
+                sha
+              });
+              
+              console.log('✅ CODEOWNERS file created/updated');
+            } catch (error) {
+              console.error('❌ Failed to create CODEOWNERS:', error.message);
+            }
+
+      - name: Summary
+        run: |
+          echo "## 🛡️ Branch Protection Setup Complete"
+          echo ""
+          echo "### Main Branch Protection:"
+          echo "- ✅ Requires PR with 1 approval"
+          echo "- ✅ Requires all CI checks to pass"
+          echo "- ✅ Requires code owner review"
+          echo "- ✅ Dismisses stale reviews"
+          echo "- ✅ Requires conversation resolution"
+          echo "- ❌ No force pushes allowed"
+          echo "- ❌ No direct pushes allowed"
+          echo ""
+          echo "### Develop Branch Protection:"
+          echo "- ✅ Requires PR with 1 approval"
+          echo "- ✅ Requires backend/frontend/security tests"
+          echo "- ✅ Requires conversation resolution"
+          echo ""
+          echo "### Next Steps:"
+          echo "1. Create 'develop' branch if it doesn't exist"
+          echo "2. Use 'develop/feature-name' pattern for feature branches"
+          echo "3. Only merge to main from 'develop/' branches"
