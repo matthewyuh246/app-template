@@ -1,0 +1,293 @@
+name: "Tests (Manual)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: "⚠️ 手動実行専用 - 必要な時のみ実行してください"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - backend-only
+          - frontend-only
+          - security-only
+          - integration-only
+
+env:
+  NODE_VERSION: "18"
+  GO_VERSION: "1.24"
+
+jobs:
+  # 🔧 手動実行：バックエンド詳細テスト
+  test-backend:
+    if: contains(github.event.inputs.test_type, 'backend') || github.event.inputs.test_type == 'all'
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: password
+          MYSQL_DATABASE: test_db
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: --health-cmd="redis-cli ping" --health-interval=10s --health-timeout=5s --health-retries=3
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install dependencies
+        working-directory: ./backend
+        run: go mod download
+
+      - name: Run tests with coverage
+        working-directory: ./backend
+        env:
+          DB_HOST: localhost
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASSWORD: password
+          DB_NAME: test_db
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+        run: |
+          echo "🧪 Running backend tests..."
+
+          if find . -name "*_test.go" -type f | grep -q .; then
+            echo "✅ Test files found, running tests with coverage..."
+            go test -v -race -coverprofile=coverage.out ./...
+            go tool cover -html=coverage.out -o coverage.html
+            
+            # カバレッジ情報を表示
+            go tool cover -func=coverage.out
+            
+            echo "✅ Backend tests completed with coverage report"
+          else
+            echo "⏭️ No test files found, skipping tests..."
+          fi
+
+      - name: Upload coverage reports
+        if: always()
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./backend/coverage.out
+          flags: backend
+          name: backend-coverage
+
+  # 🔧 手動実行：フロントエンド詳細テスト
+  test-frontend:
+    if: contains(github.event.inputs.test_type, 'frontend') || github.event.inputs.test_type == 'all'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./frontend
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Run tests with coverage
+        working-directory: ./frontend
+        run: |
+          echo "🧪 Running frontend tests..."
+
+          if find . -name "*.test.*" -o -name "*.spec.*" | grep -q .; then
+            echo "✅ Test files found, running tests with coverage..."
+            npm run test -- --coverage --watchAll=false --verbose
+            
+            echo "✅ Frontend tests completed with coverage report"
+          else
+            echo "⏭️ No test files found, skipping tests..."
+          fi
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: frontend-build
+          path: frontend/.next
+          retention-days: 7
+
+      - name: Upload coverage reports
+        if: always()
+        uses: codecov/codecov-action@v3
+        with:
+          directory: ./frontend/coverage
+          flags: frontend
+          name: frontend-coverage
+
+  # 🔧 手動実行：セキュリティスキャン
+  security-scan:
+    if: contains(github.event.inputs.test_type, 'security') || github.event.inputs.test_type == 'all'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          format: "sarif"
+          output: "trivy-results.sarif"
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: "trivy-results.sarif"
+
+      - name: Run Trivy vulnerability scanner (table format)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          format: "table"
+          output: "trivy-results.txt"
+
+      - name: Display security scan results
+        if: always()
+        run: |
+          echo "🔒 Security scan results:"
+          if [ -f trivy-results.txt ]; then
+            cat trivy-results.txt
+          else
+            echo "No results file found"
+          fi
+
+  # 🔧 手動実行：統合テスト（Docker Compose使用）
+  integration-test:
+    if: contains(github.event.inputs.test_type, 'integration') || github.event.inputs.test_type == 'all'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create .env file
+        run: |
+          cat > .env << EOF
+          # Database
+          MYSQL_ROOT_PASSWORD=test_password
+          MYSQL_DATABASE=app_template_test
+          MYSQL_USER=app_user
+          MYSQL_PASSWORD=app_password
+
+          # Backend
+          DB_HOST=mysql
+          DB_PORT=3306
+          DB_USER=app_user
+          DB_PASSWORD=app_password
+          DB_NAME=app_template_test
+          JWT_SECRET=test_jwt_secret_key_for_ci
+
+          # Frontend
+          NEXT_PUBLIC_API_BASE_URL=http://localhost:8080
+          EOF
+
+      - name: Build and run integration tests
+        run: |
+          echo "🔄 Starting integration tests..."
+          docker-compose -f docker-compose.yml up -d --build
+
+          # Wait for services to be ready
+          echo "⏳ Waiting for services to start..."
+          timeout 60 bash -c 'until curl -f http://localhost:8080/health; do sleep 2; done'
+          timeout 60 bash -c 'until curl -f http://localhost:3000; do sleep 2; done'
+
+          echo "🧪 Running connectivity tests..."
+
+          # Test backend health
+          if curl -f http://localhost:8080/health; then
+            echo "✅ Backend health check passed"
+          else
+            echo "❌ Backend health check failed"
+            exit 1
+          fi
+
+          # Test frontend
+          if curl -f http://localhost:3000; then
+            echo "✅ Frontend health check passed"
+          else
+            echo "❌ Frontend health check failed"
+            exit 1
+          fi
+
+          echo "✅ Integration test completed - all services are accessible"
+
+      - name: Show service logs on failure
+        if: failure()
+        run: |
+          echo "🔍 Displaying service logs for debugging..."
+          docker-compose logs --tail=50
+
+      - name: Cleanup
+        if: always()
+        run: |
+          echo "🧹 Cleaning up Docker containers..."
+          docker-compose down -v
+
+  # 📊 テスト結果サマリー
+  test-summary:
+    if: always()
+    needs: [test-backend, test-frontend, security-scan, integration-test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create test summary
+        run: |
+          echo "## 🔧 手動CI実行結果"
+          echo ""
+          echo "### テスト結果:"
+          echo "| テスト種類 | 結果 | 実行条件 |"
+          echo "|-----------|------|----------|"
+          echo "| Backend Tests | ${{ needs.test-backend.result == 'success' && '✅ Pass' || needs.test-backend.result == 'skipped' && '⏭️ Skipped' || '❌ Fail' }} | ${{ contains(github.event.inputs.test_type, 'backend') || github.event.inputs.test_type == 'all' && 'Executed' || 'Not selected' }} |"
+          echo "| Frontend Tests | ${{ needs.test-frontend.result == 'success' && '✅ Pass' || needs.test-frontend.result == 'skipped' && '⏭️ Skipped' || '❌ Fail' }} | ${{ contains(github.event.inputs.test_type, 'frontend') || github.event.inputs.test_type == 'all' && 'Executed' || 'Not selected' }} |"
+          echo "| Security Scan | ${{ needs.security-scan.result == 'success' && '✅ Pass' || needs.security-scan.result == 'skipped' && '⏭️ Skipped' || '❌ Fail' }} | ${{ contains(github.event.inputs.test_type, 'security') || github.event.inputs.test_type == 'all' && 'Executed' || 'Not selected' }} |"
+          echo "| Integration Tests | ${{ needs.integration-test.result == 'success' && '✅ Pass' || needs.integration-test.result == 'skipped' && '⏭️ Skipped' || '❌ Fail' }} | ${{ contains(github.event.inputs.test_type, 'integration') || github.event.inputs.test_type == 'all' && 'Executed' || 'Not selected' }} |"
+          echo ""
+          echo "**選択されたテストタイプ:** ${{ github.event.inputs.test_type }}"
+          echo "**実行者:** ${{ github.actor }}"
+          echo "**ブランチ:** ${{ github.ref_name }}"
+          echo "**コミット:** ${{ github.sha }}"
+          echo ""
+          echo "---"
+          echo ""
+          echo "💡 **次のステップ:**"
+          if [[ "${{ needs.test-backend.result }}" == "failure" || "${{ needs.test-frontend.result }}" == "failure" ]]; then
+            echo "- ❌ テストの失敗を修正してください"
+          fi
+          if [[ "${{ needs.security-scan.result }}" == "failure" ]]; then
+            echo "- 🔒 セキュリティの問題を確認してください"
+          fi
+          if [[ "${{ needs.integration-test.result }}" == "failure" ]]; then
+            echo "- 🔄 統合テストの問題を確認してください"
+          fi
+          if [[ "${{ needs.test-backend.result }}" == "success" && "${{ needs.test-frontend.result }}" == "success" && "${{ needs.security-scan.result }}" == "success" && "${{ needs.integration-test.result }}" == "success" ]]; then
+            echo "- ✅ すべてのテストが成功しました！PRのマージ準備ができています"
+          fi
