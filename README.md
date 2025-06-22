@@ -36,6 +36,57 @@
 - **Make** - ビルドオートメーション
 - **Air** - Go のホットリロード
 - **ESLint/Prettier** - コード品質
+- **golangci-lint** - Go静的解析
+
+## CI/CD パイプライン
+
+### ブランチ戦略
+
+```
+📦 Repository
+├── 🔒 main (本番環境) - develop/からのみマージ可能
+│   └── 🚀 自動デプロイ → AWS ECS
+│
+├── 🔧 develop/** (開発ブランチ)
+│   ├── 🚀 自動CI (Lint + Build)
+│   └── 👥 コードレビュー必須
+│
+├── feature/** 
+├── fix/**
+└── hotfix/**
+```
+
+### 自動CI（高速フィードバック）
+
+**実行タイミング:**
+- Pull Request作成・更新時
+- develop/**, feature/**, fix/**, hotfix/** ブランチへのpush時
+
+**チェック内容:**
+1. **ブランチ名検証** - mainへのPRは`develop/`ブランチからのみ
+2. **変更ファイル検出** - backend/frontend の変更を検出
+3. **Backend CI** (変更時のみ実行)
+   - Go 1.24 環境でビルド
+   - golangci-lint による静的解析
+4. **Frontend CI** (変更時のみ実行)
+   - Node.js 18 環境でビルド
+   - ESLint による静的解析
+   - TypeScript型チェック
+
+**実行時間**: 約1-3分
+
+### デプロイパイプライン
+
+**実行タイミング:**
+- mainブランチへのpush時
+- 手動実行 (workflow_dispatch)
+
+**パイプライン:**
+1. **Pre-deploy checks** - develop/ブランチからのマージ確認
+2. **Build** - 本番用ビルド
+3. **Deploy** - AWS ECS/ECRへのデプロイ
+4. **Smoke Tests** - 本番環境での動作確認
+5. **Rollback** - 失敗時の自動ロールバック
 
 ## プロジェクト構造
 
@@ -45,8 +96,9 @@
 ├── backend/                  # Go API サーバー
 ├── nginx/                    # Nginx設定
 ├── database/                 # データベース関連
-├── infrastructure/           # Terraform, Docker設定
+├── infrastructure/           # Terraform設定
 ├── api/                      # OpenAPI仕様
+├── .github/workflows/        # CI/CD設定
 ├── docker-compose.yml        # 開発・本番環境
 ├── Makefile                  # ビルドタスク
 └── README.md
@@ -101,6 +153,43 @@ make db-seed         # テストデータ投入
 make gen-api         # OpenAPIからコード生成
 make clean           # クリーンアップ
 ```
+
+## 開発フロー
+
+### 1. 新機能開発
+
+```bash
+# develop/ブランチ作成
+git checkout -b develop/feature-name
+
+# 開発・テスト
+make dev
+make lint
+make test
+
+# Pull Request作成
+git push origin develop/feature-name
+# GitHub UI でPR作成
+```
+
+### 2. 自動CI実行
+
+- PR作成時に自動でCI実行
+- 変更されたコンポーネント（backend/frontend）のみテスト
+- 1-3分で結果がフィードバック
+
+### 3. コードレビューとマージ
+
+- コードレビュー実施
+- CI通過後にmainブランチへマージ
+- 自動デプロイが実行
+
+### 4. デプロイ
+
+- mainブランチマージ時に自動実行
+- AWS ECS/ECRへのデプロイ
+- スモークテスト実行
+- 失敗時は自動ロールバック
 
 ## API仕様
 
@@ -294,10 +383,12 @@ MIT License
 
 ## 貢献
 
-1. フォーク
-2. フィーチャーブランチ作成
-3. コミット
-4. プルリクエスト作成
+1. `develop/feature-name` ブランチを作成
+2. 変更を実装
+3. CI通過を確認
+4. Pull Request作成
+5. コードレビュー
+6. mainブランチへマージ
 
 ---
 
