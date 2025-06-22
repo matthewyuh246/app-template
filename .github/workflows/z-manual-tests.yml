@@ -1,10 +1,10 @@
-name: Manual CI Pipeline
+name: "Tests (Manual)"
 
 on:
   workflow_dispatch:
     inputs:
       test_type:
-        description: "実行するテストの種類を選択"
+        description: "⚠️ 手動実行専用 - 必要な時のみ実行してください"
         required: true
         default: "all"
         type: choice
