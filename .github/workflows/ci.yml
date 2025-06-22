@@ -63,7 +63,7 @@ jobs:
   # 🔍 バックエンドLint
   backend-lint:
     needs: [essential-checks]
-    if: needs.essential-checks.outputs.backend == 'true'
+    if: needs.essential-checks.result == 'success' && needs.essential-checks.outputs.backend == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -97,7 +97,7 @@ jobs:
   # 🔨 バックエンドビルド
   backend-build:
     needs: [essential-checks]
-    if: needs.essential-checks.outputs.backend == 'true'
+    if: needs.essential-checks.result == 'success' && needs.essential-checks.outputs.backend == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -130,7 +130,7 @@ jobs:
   # 🔍 フロントエンドLint
   frontend-lint:
     needs: [essential-checks]
-    if: needs.essential-checks.outputs.frontend == 'true'
+    if: needs.essential-checks.result == 'success' && needs.essential-checks.outputs.frontend == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -166,7 +166,7 @@ jobs:
   # 🔨 フロントエンドビルド
   frontend-build:
     needs: [essential-checks]
-    if: needs.essential-checks.outputs.frontend == 'true'
+    if: needs.essential-checks.result == 'success' && needs.essential-checks.outputs.frontend == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -194,7 +194,7 @@ jobs:
 
   # PR要約コメント（自動実行時のみ）
   pr-summary:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && always()
     needs:
       [
         essential-checks,
