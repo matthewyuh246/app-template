@@ -84,7 +84,7 @@ func getMigrationFiles() ([]string, error) {
 	}
 
 	// ファイル名でソート
-	sort.Strings(files)
+	sort.Strings(files
 	
 	// ファイル名のみを取得
 	var migrationFiles []string
