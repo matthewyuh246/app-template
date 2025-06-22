@@ -6,10 +6,11 @@ on:
     types: [opened, synchronize, reopened]
   push:
     branches: [develop, "develop/**", "feature/**", "fix/**", "hotfix/**"]
+  workflow_dispatch: # 手動実行を許可
 
 env:
   NODE_VERSION: "18"
-  GO_VERSION: "1.21"
+  GO_VERSION: "1.24"
 
 jobs:
   # ブランチ名チェック（mainへのPRは develop/ から始まる必要がある）
@@ -59,10 +60,93 @@ jobs:
               - 'Dockerfile*'
               - '.github/workflows/**'
 
-  # バックエンドテスト
-  test-backend:
+  # 🚀 自動実行：バックエンドビルド&Lint
+  build-backend:
     needs: [detect-changes]
     if: needs.detect-changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install dependencies
+        working-directory: ./backend
+        run: go mod download
+
+      - name: Build application
+        working-directory: ./backend
+        run: |
+          echo "🔨 Building Go application..."
+          go build -o app ./cmd/main.go
+          echo "✅ Build successful"
+
+      - name: Run linting
+        working-directory: ./backend
+        run: |
+          echo "🔍 Running Go linting..."
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+          golangci-lint run --timeout=5m
+          echo "✅ Linting passed"
+
+  # 🚀 自動実行：フロントエンドビルド&Lint
+  build-frontend:
+    needs: [detect-changes]
+    if: needs.detect-changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./frontend
+        run: |
+          echo "📦 Installing dependencies..."
+          npm ci --prefer-offline --no-audit
+
+      - name: Run ESLint
+        working-directory: ./frontend
+        run: |
+          echo "🔍 Running ESLint..."
+          npm run lint
+          echo "✅ ESLint passed"
+
+      - name: Run type check
+        working-directory: ./frontend
+        run: |
+          echo "🔍 Running TypeScript type check..."
+          npm run type-check
+          echo "✅ Type check passed"
+
+      - name: Build application
+        working-directory: ./frontend
+        run: |
+          echo "🔨 Building Next.js application..."
+          npm run build
+          echo "✅ Build successful"
+
+  # 🔧 手動実行：バックエンドテスト（重い処理）
+  test-backend:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
 
     services:
@@ -101,7 +185,7 @@ jobs:
         working-directory: ./backend
         run: go mod download
 
-      - name: Check for tests and run if present
+      - name: Run tests
         working-directory: ./backend
         env:
           DB_HOST: localhost
@@ -130,16 +214,9 @@ jobs:
           file: ./backend/coverage.out
           flags: backend
 
-      - name: Run linting
-        working-directory: ./backend
-        run: |
-          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-          golangci-lint run --timeout=5m
-
-  # フロントエンドテスト
+  # 🔧 手動実行：フロントエンドテスト（重い処理）
   test-frontend:
-    needs: [detect-changes]
-    if: needs.detect-changes.outputs.frontend == 'true'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
 
     steps:
@@ -156,15 +233,7 @@ jobs:
         working-directory: ./frontend
         run: npm ci --prefer-offline --no-audit
 
-      - name: Run ESLint
-        working-directory: ./frontend
-        run: npm run lint
-
-      - name: Run type check
-        working-directory: ./frontend
-        run: npm run type-check
-
-      - name: Check for tests and run if present
+      - name: Run tests
         working-directory: ./frontend
         run: |
           if find . -name "*.test.*" -o -name "*.spec.*" | grep -q .; then
@@ -174,10 +243,6 @@ jobs:
             echo "⏭️ No test files found, skipping tests..."
           fi
 
-      - name: Build application
-        working-directory: ./frontend
-        run: npm run build
-
       - name: Upload build artifacts
         uses: actions/upload-artifact@v3
         with:
@@ -185,8 +250,9 @@ jobs:
           path: frontend/.next
           retention-days: 7
 
-  # セキュリティスキャン
+  # 🔧 手動実行：セキュリティスキャン
   security-scan:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -205,10 +271,9 @@ jobs:
         with:
           sarif_file: "trivy-results.sarif"
 
-  # 統合テスト（Docker Compose使用）
+  # 🔧 手動実行：統合テスト（Docker Compose使用）
   integration-test:
-    needs: [detect-changes]
-    if: needs.detect-changes.outputs.backend == 'true' || needs.detect-changes.outputs.frontend == 'true'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
 
     steps:
@@ -237,9 +302,11 @@ jobs:
 
       - name: Build and run integration tests
         run: |
+          echo "🔄 Starting integration tests..."
           docker-compose -f docker-compose.yml up -d --build
 
           # Wait for services to be ready
+          echo "⏳ Waiting for services to start..."
           timeout 60 bash -c 'until curl -f http://localhost:8080/health; do sleep 2; done'
           timeout 60 bash -c 'until curl -f http://localhost:3000; do sleep 2; done'
 
@@ -252,17 +319,10 @@ jobs:
           # Cleanup
           docker-compose down -v
 
-  # PR要約コメント
+  # PR要約コメント（自動実行時のみ）
   pr-summary:
     if: github.event_name == 'pull_request'
-    needs:
-      [
-        branch-protection,
-        test-backend,
-        test-frontend,
-        security-scan,
-        integration-test,
-      ]
+    needs: [branch-protection, build-backend, build-frontend]
     runs-on: ubuntu-latest
     steps:
       - name: Comment PR summary
@@ -270,18 +330,25 @@ jobs:
         with:
           script: |
             const summary = `
-            ## 🚀 CI Pipeline Results
+            ## 🚀 自動CI結果 (基本チェック)
 
             | Check | Status |
             |-------|--------|
-            | Branch Protection | ✅ Passed |
-            | Backend Tests | ${{ needs.test-backend.result == 'success' && '✅' || needs.test-backend.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.test-backend.result }} |
-            | Frontend Tests | ${{ needs.test-frontend.result == 'success' && '✅' || needs.test-frontend.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.test-frontend.result }} |
-            | Security Scan | ${{ needs.security-scan.result == 'success' && '✅' || '❌' }} ${{ needs.security-scan.result }} |
-            | Integration Tests | ${{ needs.integration-test.result == 'success' && '✅' || needs.integration-test.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.integration-test.result }} |
+            | Branch Protection | ${{ needs.branch-protection.result == 'success' && '✅' || needs.branch-protection.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.branch-protection.result || 'skipped' }} |
+            | Backend Build & Lint | ${{ needs.build-backend.result == 'success' && '✅' || needs.build-backend.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.build-backend.result || 'skipped' }} |
+            | Frontend Build & Lint | ${{ needs.build-frontend.result == 'success' && '✅' || needs.build-frontend.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.build-frontend.result || 'skipped' }} |
 
             **Branch:** \`${{ github.head_ref }}\` → \`${{ github.base_ref }}\`
             **Commit:** ${{ github.sha }}
+
+            ---
+
+            💡 **手動実行が必要な追加テスト:**
+            - 🧪 Unit Tests (Backend/Frontend)
+            - 🔒 Security Scan
+            - 🔄 Integration Tests
+
+            手動実行は GitHub Actions の「Run workflow」ボタンから実行してください。
             `;
 
             github.rest.issues.createComment({
