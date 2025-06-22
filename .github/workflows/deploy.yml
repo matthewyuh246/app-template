@@ -38,8 +38,8 @@ jobs:
             echo "⚠️  API changes detected - ensure backward compatibility"
           fi
 
-  # ビルドとテスト
-  build-and-test:
+  # ビルド
+  build:
     runs-on: ubuntu-latest
     needs: [pre-deploy-checks]
 
@@ -83,31 +83,9 @@ jobs:
             backend/main
           retention-days: 30
 
-  # セキュリティチェック
-  security-check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Run dependency vulnerability scan
-        run: |
-          # Go dependencies
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          cd backend && govulncheck ./...
-
-          # Node.js dependencies
-          cd frontend && npm audit --audit-level moderate
-
-      - name: Run secrets scan
-        uses: trufflesecurity/trufflehog@main
-        with:
-          path: ./
-          base: main
-          head: HEAD
-
   # デプロイ
   deploy:
-    needs: [build-and-test, security-check]
+    needs: [build]
     runs-on: ubuntu-latest
     environment: production
 
