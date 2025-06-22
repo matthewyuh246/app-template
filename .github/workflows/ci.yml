@@ -13,9 +13,13 @@ env:
   GO_VERSION: "1.24"
 
 jobs:
-  # 必須チェック: ブランチ名・ビルド・Lint
+  # 必須チェック: ブランチ名・変更検出
   essential-checks:
     runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.changes.outputs.backend }}
+      frontend: ${{ steps.changes.outputs.frontend }}
+      infrastructure: ${{ steps.changes.outputs.infrastructure }}
     steps:
       # ブランチ名チェック（mainへのPRのみ）
       - name: Check branch naming convention
@@ -57,8 +61,8 @@ jobs:
 
   # 🚀 自動実行：バックエンドビルド&Lint
   build-backend:
-    needs: [detect-changes]
-    if: needs.detect-changes.outputs.backend == 'true'
+    needs: [essential-checks]
+    if: needs.essential-checks.outputs.backend == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -98,8 +102,8 @@ jobs:
 
   # 🚀 自動実行：フロントエンドビルド&Lint
   build-frontend:
-    needs: [detect-changes]
-    if: needs.detect-changes.outputs.frontend == 'true'
+    needs: [essential-checks]
+    if: needs.essential-checks.outputs.frontend == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -306,7 +310,7 @@ jobs:
   # PR要約コメント（自動実行時のみ）
   pr-summary:
     if: github.event_name == 'pull_request'
-    needs: [branch-protection, build-backend, build-frontend]
+    needs: [essential-checks, build-backend, build-frontend]
     runs-on: ubuntu-latest
     steps:
       - name: Comment PR summary
@@ -318,7 +322,7 @@ jobs:
 
             | Check | Status |
             |-------|--------|
-            | Branch Protection | ${{ needs.branch-protection.result == 'success' && '✅' || needs.branch-protection.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.branch-protection.result || 'skipped' }} |
+            | Essential Checks | ${{ needs.essential-checks.result == 'success' && '✅' || needs.essential-checks.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.essential-checks.result || 'skipped' }} |
             | Backend Build & Lint | ${{ needs.build-backend.result == 'success' && '✅' || needs.build-backend.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.build-backend.result || 'skipped' }} |
             | Frontend Build & Lint | ${{ needs.build-frontend.result == 'success' && '✅' || needs.build-frontend.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.build-frontend.result || 'skipped' }} |
 
@@ -335,5 +339,9 @@ jobs:
             手動実行は GitHub Actions の「Run workflow」ボタンから実行してください。
             `;
 
-
-          echo "✅ Frontend build and lint completed!"
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });
