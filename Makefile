@@ -1,21 +1,24 @@
-.PHONY: help setup dev build test lint clean db-migrate db-seed db-reset gen-api version
+.PHONY: help setup dev build test lint clean db-migrate db-migrate-down db-migrate-version db-create-migration db-seed db-reset gen-api version
 
 # デフォルトターゲット
 help:
 	@echo "利用可能なコマンド:"
-	@echo "  setup          - 初期セットアップ"
-	@echo "  dev            - 開発サーバー起動"
-	@echo "  prod           - 本番環境起動（nginx）"
-	@echo "  build          - プロダクションビルド"
-	@echo "  test           - テスト実行"
-	@echo "  lint           - リント実行"
-	@echo "  db-migrate     - データベースマイグレーション"
-	@echo "  db-seed        - テストデータ投入"
-	@echo "  db-reset       - データベースリセット"
-	@echo "  merge-api      - OpenAPI仕様をマージ"
-	@echo "  gen-api        - OpenAPIからコード生成"
-	@echo "  version        - バージョン情報表示"
-	@echo "  clean          - クリーンアップ"
+	@echo "  setup               - 初期セットアップ"
+	@echo "  dev                 - 開発サーバー起動"
+	@echo "  prod                - 本番環境起動（nginx）"
+	@echo "  build               - プロダクションビルド"
+	@echo "  test                - テスト実行"
+	@echo "  lint                - リント実行"
+	@echo "  db-migrate          - データベースマイグレーション（up）"
+	@echo "  db-migrate-down     - マイグレーションロールバック（down）"
+	@echo "  db-migrate-version  - マイグレーション状態確認"
+	@echo "  db-create-migration - 新しいマイグレーションファイル作成"
+	@echo "  db-seed             - テストデータ投入"
+	@echo "  db-reset            - データベースリセット"
+	@echo "  merge-api           - OpenAPI仕様をマージ"
+	@echo "  gen-api             - OpenAPIからコード生成"
+	@echo "  version             - バージョン情報表示"
+	@echo "  clean               - クリーンアップ"
 
 # 初期セットアップ
 setup:
@@ -78,7 +81,32 @@ lint:
 db-migrate:
 	@echo "📊 データベースマイグレーションを実行中..."
 	docker-compose exec -T mysql mysql -uroot -ppassword -P 3306 -e "CREATE DATABASE IF NOT EXISTS app_db;"
+	cd backend && go run cmd/migrate/main.go up
 	@echo "✅ マイグレーション完了!"
+
+# マイグレーション（ダウン）
+db-migrate-down:
+	@echo "📊 マイグレーションをロールバック中..."
+	cd backend && go run cmd/migrate/main.go down
+	@echo "✅ マイグレーションロールバック完了!"
+
+# マイグレーション状態確認
+db-migrate-version:
+	@echo "📊 マイグレーション状態を確認中..."
+	cd backend && go run cmd/migrate/main.go version
+	@echo "✅ マイグレーション状態確認完了!"
+
+# 新しいマイグレーションファイル作成
+db-create-migration:
+	@echo "📊 新しいマイグレーションファイルを作成中..."
+	@read -p "マイグレーション名を入力してください: " name; \
+	existing_count=$$(ls database/migrations/*.up.sql 2>/dev/null | wc -l); \
+	next_number=$$(printf "%06d" $$((existing_count + 1))); \
+	touch database/migrations/$$next_number\_$$name.up.sql; \
+	touch database/migrations/$$next_number\_$$name.down.sql; \
+	echo "✅ マイグレーションファイル作成完了: $$next_number\_$$name"; \
+	echo "UP ファイル: database/migrations/$$next_number\_$$name.up.sql"; \
+	echo "DOWN ファイル: database/migrations/$$next_number\_$$name.down.sql"
 
 # テストデータ投入
 db-seed:

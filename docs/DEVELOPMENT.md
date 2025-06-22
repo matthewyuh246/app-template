@@ -1,5 +1,229 @@
 # 開発ガイド
 
+## 概要
+
+このプロジェクトは、Go（Gin）バックエンド、Next.js（TypeScript）フロントエンド、MySQL データベースを使用したWebアプリケーションです。
+
+## 前提条件
+
+- Docker & Docker Compose
+- Go 1.24以上
+- Node.js 18以上
+- Make
+
+## セットアップ
+
+### 1. 初期セットアップ
+
+```bash
+make setup
+```
+
+### 2. 開発サーバー起動
+
+```bash
+make dev
+```
+
+このコマンドは以下を実行します：
+- MySQLコンテナの起動
+- データベースマイグレーション
+- フロントエンドとバックエンドの開発サーバー起動
+
+## データベース管理
+
+このプロジェクトは **golang-migrate** を使用してデータベースマイグレーションを管理しています。
+
+### マイグレーション関連コマンド
+
+```bash
+# マイグレーション実行（最新版まで適用）
+make db-migrate
+
+# マイグレーションロールバック（1つ前に戻す）
+make db-migrate-down
+
+# 現在のマイグレーション状態確認
+make db-migrate-version
+
+# 新しいマイグレーションファイル作成
+make db-create-migration
+```
+
+### マイグレーションファイルの構造
+
+マイグレーションファイルは `database/migrations/` ディレクトリに以下の命名規則で保存されます：
+
+```
+database/migrations/
+├── 000001_create_users_table.up.sql    # UP マイグレーション
+├── 000001_create_users_table.down.sql  # DOWN マイグレーション
+├── 000002_add_products_table.up.sql
+└── 000002_add_products_table.down.sql
+```
+
+### 新しいマイグレーション作成手順
+
+1. マイグレーションファイルを作成：
+```bash
+make db-create-migration
+# プロンプトでマイグレーション名を入力（例：add_products_table）
+```
+
+2. 作成されたUPファイルにSQL文を記述：
+```sql
+-- database/migrations/000002_add_products_table.up.sql
+CREATE TABLE products (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    price DECIMAL(10,2) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+
+3. DOWNファイルにロールバック用SQL文を記述：
+```sql
+-- database/migrations/000002_add_products_table.down.sql
+DROP TABLE IF EXISTS products;
+```
+
+4. マイグレーションを実行：
+```bash
+make db-migrate
+```
+
+### 高度なマイグレーション操作
+
+```bash
+# 直接マイグレーションコマンドを実行（backend ディレクトリから）
+go run cmd/migrate/main.go up      # 最新版まで適用
+go run cmd/migrate/main.go down    # 1つ前に戻す
+go run cmd/migrate/main.go version # 現在の状態確認
+go run cmd/migrate/main.go force 1 # 特定バージョンに強制設定
+go run cmd/migrate/main.go drop    # 全てのマイグレーションを削除
+```
+
+## API開発
+
+### OpenAPI/Swagger仕様
+
+API仕様は OpenAPI 3.0 形式で管理されています。
+
+```bash
+# API仕様をマージ
+make merge-api
+
+# コード生成
+make gen-api
+```
+
+詳細は [SWAGGER_OPENAPI_GUIDE.md](./SWAGGER_OPENAPI_GUIDE.md) を参照してください。
+
+## テスト
+
+```bash
+# テスト実行
+make test
+
+# リント実行
+make lint
+```
+
+## ビルド
+
+```bash
+# プロダクションビルド
+make build
+
+# 本番環境起動
+make prod
+```
+
+## データベースリセット
+
+開発中にデータベースを完全にリセットしたい場合：
+
+```bash
+make db-reset
+```
+
+このコマンドは以下を実行します：
+1. Docker コンテナの停止
+2. データベースボリュームの削除
+3. 新しいコンテナの起動
+4. マイグレーション実行
+5. シードデータ投入
+
+## トラブルシューティング
+
+### マイグレーションが失敗する場合
+
+1. データベースの状態確認：
+```bash
+make db-migrate-version
+```
+
+2. エラーが発生している場合、手動で修正：
+```bash
+# backend ディレクトリから
+go run cmd/migrate/main.go force [version_number]
+```
+
+3. マイグレーションの再実行：
+```bash
+make db-migrate
+```
+
+### データベース接続エラー
+
+1. MySQLコンテナが起動しているか確認：
+```bash
+docker-compose ps
+```
+
+2. 環境変数が正しく設定されているか確認：
+```bash
+cat .env
+```
+
+3. データベースコンテナのログ確認：
+```bash
+docker-compose logs mysql
+```
+
+## 環境変数
+
+`.env` ファイルの設定例：
+
+```env
+# Database
+DB_HOST=localhost
+DB_PORT=3306
+DB_USER=root
+DB_PASSWORD=password
+DB_NAME=app_db
+
+# JWT
+JWT_SECRET=your-secret-key-here
+
+# その他の設定...
+```
+
+## 開発フロー
+
+1. 新機能の開発
+2. データベースの変更が必要な場合、マイグレーションファイル作成
+3. API仕様の更新（必要に応じて）
+4. コード実装
+5. テスト実行
+6. コミット・プッシュ
+
+## 参考資料
+
+- [CI/CD ガイド](./CI_CD_GUIDE.md)
+- [Swagger/OpenAPI ガイド](./SWAGGER_OPENAPI_GUIDE.md)
+- [リントガイド](./LINT_GUIDE.md)
+
 ## 🌳 ブランチ戦略
 
 このプロジェクトでは **Git Flow** を簡略化したブランチ戦略を採用しています。
