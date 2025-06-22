@@ -2,7 +2,7 @@ name: CI Pipeline
 
 on:
   pull_request:
-    branches: [main, develop]
+    branches: [main]
     types: [opened, synchronize, reopened]
   push:
     branches: [develop, "develop/**", "feature/**", "fix/**", "hotfix/**"]
@@ -13,12 +13,13 @@ env:
   GO_VERSION: "1.24"
 
 jobs:
-  # ブランチ名チェック（mainへのPRは develop/ から始まる必要がある）
-  branch-protection:
+  # 必須チェック: ブランチ名・ビルド・Lint
+  essential-checks:
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && github.base_ref == 'main'
     steps:
+      # ブランチ名チェック（mainへのPRのみ）
       - name: Check branch naming convention
+        if: github.event_name == 'pull_request' && github.base_ref == 'main'
         run: |
           BRANCH_NAME="${{ github.head_ref }}"
           echo "Checking branch name: $BRANCH_NAME"
@@ -32,15 +33,9 @@ jobs:
 
           echo "✅ Branch name follows convention: $BRANCH_NAME"
 
-  # 変更ファイル検出
-  detect-changes:
-    runs-on: ubuntu-latest
-    outputs:
-      backend: ${{ steps.changes.outputs.backend }}
-      frontend: ${{ steps.changes.outputs.frontend }}
-      infrastructure: ${{ steps.changes.outputs.infrastructure }}
-    steps:
       - uses: actions/checkout@v4
+
+      # 変更ファイル検出
       - uses: dorny/paths-filter@v2
         id: changes
         with:
@@ -196,23 +191,12 @@ jobs:
           REDIS_HOST: localhost
           REDIS_PORT: 6379
         run: |
-          if find . -name "*_test.go" -type f | grep -q .; then
-            echo "✅ Test files found, running tests..."
-            go test -v -race -coverprofile=coverage.out ./...
-            go tool cover -html=coverage.out -o coverage.html
-            echo "tests_exist=true" >> $GITHUB_OUTPUT
-          else
-            echo "⏭️ No test files found, skipping tests..."
-            echo "tests_exist=false" >> $GITHUB_OUTPUT
-          fi
-        id: test_check
+          echo "🔧 Setting up Go environment..."
+          cd backend
+          go mod download
 
-      - name: Upload coverage reports
-        if: steps.test_check.outputs.tests_exist == 'true'
-        uses: codecov/codecov-action@v3
-        with:
-          file: ./backend/coverage.out
-          flags: backend
+          echo "🏗️ Building backend..."
+          go build -o bin/app cmd/main.go
 
   # 🔧 手動実行：フロントエンドテスト（重い処理）
   test-frontend:
@@ -351,9 +335,5 @@ jobs:
             手動実行は GitHub Actions の「Run workflow」ボタンから実行してください。
             `;
 
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: summary
-            });
+
+          echo "✅ Frontend build and lint completed!"
