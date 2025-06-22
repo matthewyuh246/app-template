@@ -15,7 +15,7 @@ jobs:
   # 必須チェック: ブランチ名・変更検出
   essential-checks:
     # PRが存在する場合はpull_requestトリガーのみ、そうでなければpushトリガーで実行
-    if: github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/heads/develop/'))
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ubuntu-latest
     outputs:
       backend: ${{ steps.changes.outputs.backend }}
