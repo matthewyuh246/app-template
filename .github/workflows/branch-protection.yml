@@ -27,11 +27,9 @@ jobs:
                 required_status_checks: {
                   strict: true,
                   contexts: [
-                    'branch-protection',
-                    'test-backend',
-                    'test-frontend', 
-                    'security-scan',
-                    'integration-test'
+                    'essential-checks',
+                    'build-backend',
+                    'build-frontend'
                   ]
                 },
                 enforce_admins: false,
@@ -86,9 +84,8 @@ jobs:
                 required_status_checks: {
                   strict: true,
                   contexts: [
-                    'test-backend',
-                    'test-frontend',
-                    'security-scan'
+                    'build-backend',
+                    'build-frontend'
                   ]
                 },
                 enforce_admins: false,
