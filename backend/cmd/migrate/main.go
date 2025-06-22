@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
-	"sort"
 
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/database/mysql"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/joho/godotenv"
 
 	"app-template/pkg/database"
@@ -36,106 +37,105 @@ func main() {
 }
 
 func runMigrations(db *sql.DB) error {
-	// マイグレーションテーブルを作成
-	if err := createMigrationsTable(db); err != nil {
-		return fmt.Errorf("failed to create migrations table: %w", err)
-	}
-
-	// マイグレーションファイルを取得
-	migrationFiles, err := getMigrationFiles()
+	// MySQL ドライバーの設定
+	driver, err := mysql.WithInstance(db, &mysql.Config{})
 	if err != nil {
-		return fmt.Errorf("failed to get migration files: %w", err)
+		return fmt.Errorf("failed to create mysql driver: %w", err)
 	}
 
-	// 実行済みマイグレーションを取得
-	executedMigrations, err := getExecutedMigrations(db)
+	// マイグレーションファイルのパスを設定
+	migrationsPath := "file://database/migrations"
+	
+	// migrate インスタンスを作成
+	m, err := migrate.NewWithDatabaseInstance(migrationsPath, "mysql", driver)
 	if err != nil {
-		return fmt.Errorf("failed to get executed migrations: %w", err)
+		return fmt.Errorf("failed to create migrate instance: %w", err)
 	}
 
-	// 新しいマイグレーションを実行
-	for _, file := range migrationFiles {
-		if !contains(executedMigrations, file) {
-			if err := executeMigration(db, file); err != nil {
-				return fmt.Errorf("failed to execute migration %s: %w", file, err)
-			}
-			log.Printf("Executed migration: %s", file)
+	// コマンドライン引数をチェック
+	args := os.Args[1:]
+	if len(args) == 0 {
+		// 引数がない場合は up を実行
+		return runUp(m)
+	}
+
+	switch args[0] {
+	case "up":
+		return runUp(m)
+	case "down":
+		return runDown(m)
+	case "drop":
+		return runDrop(m)
+	case "version":
+		return showVersion(m)
+	case "force":
+		if len(args) < 2 {
+			return fmt.Errorf("force command requires version argument")
 		}
+		return runForce(m, args[1])
+	default:
+		return fmt.Errorf("unknown command: %s. Available commands: up, down, drop, version, force", args[0])
 	}
+}
 
+func runUp(m *migrate.Migrate) error {
+	log.Println("Running migrations up...")
+	err := m.Up()
+	if err != nil && err != migrate.ErrNoChange {
+		return fmt.Errorf("failed to run migrations up: %w", err)
+	}
+	if err == migrate.ErrNoChange {
+		log.Println("No new migrations to apply")
+	} else {
+		log.Println("Migrations applied successfully")
+	}
 	return nil
 }
 
-func createMigrationsTable(db *sql.DB) error {
-	query := `
-		CREATE TABLE IF NOT EXISTS schema_migrations (
-			version VARCHAR(255) PRIMARY KEY,
-			executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-	`
-	_, err := db.Exec(query)
-	return err
+func runDown(m *migrate.Migrate) error {
+	log.Println("Running migrations down...")
+	err := m.Steps(-1)
+	if err != nil && err != migrate.ErrNoChange {
+		return fmt.Errorf("failed to run migrations down: %w", err)
+	}
+	if err == migrate.ErrNoChange {
+		log.Println("No migrations to rollback")
+	} else {
+		log.Println("Migration rolled back successfully")
+	}
+	return nil
 }
 
-func getMigrationFiles() ([]string, error) {
-	files, err := filepath.Glob("database/migrations/*.sql")
+func runDrop(m *migrate.Migrate) error {
+	log.Println("Dropping all migrations...")
+	err := m.Drop()
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("failed to drop migrations: %w", err)
 	}
+	log.Println("All migrations dropped successfully")
+	return nil
+}
 
-	// ファイル名でソート
-	sort.Strings(files)
+func showVersion(m *migrate.Migrate) error {
+	version, dirty, err := m.Version()
+	if err != nil {
+		return fmt.Errorf("failed to get migration version: %w", err)
+	}
+	log.Printf("Current migration version: %d, dirty: %v", version, dirty)
+	return nil
+}
+
+func runForce(m *migrate.Migrate, versionStr string) error {
+	var version int
+	if _, err := fmt.Sscanf(versionStr, "%d", &version); err != nil {
+		return fmt.Errorf("invalid version format: %s", versionStr)
+	}
 	
-	// ファイル名のみを取得
-	var migrationFiles []string
-	for _, file := range files {
-		migrationFiles = append(migrationFiles, filepath.Base(file))
-	}
-
-	return migrationFiles, nil
-}
-
-func getExecutedMigrations(db *sql.DB) ([]string, error) {
-	rows, err := db.Query("SELECT version FROM schema_migrations")
+	log.Printf("Forcing migration to version %d...", version)
+	err := m.Force(version)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("failed to force migration: %w", err)
 	}
-	defer rows.Close()
-
-	var migrations []string
-	for rows.Next() {
-		var version string
-		if err := rows.Scan(&version); err != nil {
-			return nil, err
-		}
-		migrations = append(migrations, version)
-	}
-
-	return migrations, nil
-}
-
-func executeMigration(db *sql.DB, filename string) error {
-	// マイグレーションファイルを読み込み
-	content, err := os.ReadFile(filepath.Join("database/migrations", filename))
-	if err != nil {
-		return err
-	}
-
-	// SQLを実行
-	if _, err := db.Exec(string(content)); err != nil {
-		return err
-	}
-
-	// マイグレーション記録を追加
-	_, err = db.Exec("INSERT INTO schema_migrations (version) VALUES (?)", filename)
-	return err
-}
-
-func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
+	log.Printf("Migration forced to version %d successfully", version)
+	return nil
 } 

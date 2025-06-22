@@ -54,18 +54,17 @@ jobs:
             frontend:
               - 'frontend/**'
               - 'package*.json'
+            infrastructure:
+              - 'infrastructure/**'
+              - 'docker-compose.yml'
+              - 'Dockerfile*'
+              - '.github/workflows/**'
 
   # 🔍 バックエンドLint
   backend-lint:
     needs: [essential-checks]
     if: needs.essential-checks.result == 'success' && needs.essential-checks.outputs.backend == 'true'
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && github.base_ref == 'main'
-    steps:
-      - name: Check branch naming convention
-        run: |
-          BRANCH_NAME="${{ github.head_ref }}"
-          echo "🔍 Checking branch name: $BRANCH_NAME"
 
     steps:
       - uses: actions/checkout@v4
@@ -75,14 +74,17 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - name: Build backend
-        run: |
-          echo "🔧 Setting up Go environment..."
-          cd backend
-          go mod download
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
 
-          echo "🏗️ Building backend..."
-          go build -o bin/app cmd/main.go
+      - name: Install dependencies
+        working-directory: ./backend
+        run: go mod download
 
       - name: Run linting
         working-directory: ./backend
@@ -131,11 +133,6 @@ jobs:
     if: needs.essential-checks.result == 'success' && needs.essential-checks.outputs.frontend == 'true'
     runs-on: ubuntu-latest
 
-  # 4. フロントエンドビルド
-  frontend-build:
-    runs-on: ubuntu-latest
-    needs: detect-changes
-    if: needs.detect-changes.outputs.frontend == 'true'
     steps:
       - uses: actions/checkout@v4
 
