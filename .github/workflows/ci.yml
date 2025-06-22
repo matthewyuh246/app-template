@@ -60,8 +60,42 @@ jobs:
               - 'Dockerfile*'
               - '.github/workflows/**'
 
-  # 🚀 自動実行：バックエンドビルド&Lint
-  build-backend:
+  # 🔍 バックエンドLint
+  backend-lint:
+    needs: [essential-checks]
+    if: needs.essential-checks.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install dependencies
+        working-directory: ./backend
+        run: go mod download
+
+      - name: Run linting
+        working-directory: ./backend
+        run: |
+          echo "🔍 Running Go linting..."
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+          golangci-lint run --timeout=5m
+          echo "✅ Linting passed"
+
+  # 🔨 バックエンドビルド
+  backend-build:
     needs: [essential-checks]
     if: needs.essential-checks.outputs.backend == 'true'
     runs-on: ubuntu-latest
@@ -93,16 +127,8 @@ jobs:
           go build -o app ./cmd/main.go
           echo "✅ Build successful"
 
-      - name: Run linting
-        working-directory: ./backend
-        run: |
-          echo "🔍 Running Go linting..."
-          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-          golangci-lint run --timeout=5m
-          echo "✅ Linting passed"
-
-  # 🚀 自動実行：フロントエンドビルド&Lint
-  build-frontend:
+  # 🔍 フロントエンドLint
+  frontend-lint:
     needs: [essential-checks]
     if: needs.essential-checks.outputs.frontend == 'true'
     runs-on: ubuntu-latest
@@ -137,6 +163,28 @@ jobs:
           npm run type-check
           echo "✅ Type check passed"
 
+  # 🔨 フロントエンドビルド
+  frontend-build:
+    needs: [essential-checks]
+    if: needs.essential-checks.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./frontend
+        run: |
+          echo "📦 Installing dependencies..."
+          npm ci --prefer-offline --no-audit
+
       - name: Build application
         working-directory: ./frontend
         run: |
@@ -147,7 +195,14 @@ jobs:
   # PR要約コメント（自動実行時のみ）
   pr-summary:
     if: github.event_name == 'pull_request'
-    needs: [essential-checks, build-backend, build-frontend]
+    needs:
+      [
+        essential-checks,
+        backend-lint,
+        backend-build,
+        frontend-lint,
+        frontend-build,
+      ]
     runs-on: ubuntu-latest
     steps:
       - name: Comment PR summary
@@ -155,13 +210,15 @@ jobs:
         with:
           script: |
             const summary = `
-            ## 🚀 自動CI結果 (基本チェック)
+            ## 🚀 自動CI結果
 
             | Check | Status |
             |-------|--------|
             | Essential Checks | ${{ needs.essential-checks.result == 'success' && '✅' || needs.essential-checks.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.essential-checks.result || 'skipped' }} |
-            | Backend Build & Lint | ${{ needs.build-backend.result == 'success' && '✅' || needs.build-backend.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.build-backend.result || 'skipped' }} |
-            | Frontend Build & Lint | ${{ needs.build-frontend.result == 'success' && '✅' || needs.build-frontend.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.build-frontend.result || 'skipped' }} |
+            | Backend Lint | ${{ needs.backend-lint.result == 'success' && '✅' || needs.backend-lint.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.backend-lint.result || 'skipped' }} |
+            | Backend Build | ${{ needs.backend-build.result == 'success' && '✅' || needs.backend-build.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.backend-build.result || 'skipped' }} |
+            | Frontend Lint | ${{ needs.frontend-lint.result == 'success' && '✅' || needs.frontend-lint.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.frontend-lint.result || 'skipped' }} |
+            | Frontend Build | ${{ needs.frontend-build.result == 'success' && '✅' || needs.frontend-build.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.frontend-build.result || 'skipped' }} |
 
             **Branch:** \`${{ github.head_ref }}\` → \`${{ github.base_ref }}\`
             **Commit:** ${{ github.sha }}
