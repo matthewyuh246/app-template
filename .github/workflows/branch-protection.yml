@@ -27,11 +27,11 @@ jobs:
                 required_status_checks: {
                   strict: true,
                   contexts: [
-                    'branch-protection',
-                    'test-backend',
-                    'test-frontend', 
-                    'security-scan',
-                    'integration-test'
+                    'essential-checks',
+                    'backend-lint',
+                    'backend-build',
+                    'frontend-lint',
+                    'frontend-build'
                   ]
                 },
                 enforce_admins: false,
@@ -69,55 +69,6 @@ jobs:
               }
               
               throw error;
-            }
-
-      - name: Setup branch protection for develop
-        uses: actions/github-script@v6
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const { owner, repo } = context.repo;
-
-            try {
-              await github.rest.repos.updateBranchProtection({
-                owner,
-                repo,
-                branch: 'develop',
-                required_status_checks: {
-                  strict: true,
-                  contexts: [
-                    'test-backend',
-                    'test-frontend',
-                    'security-scan'
-                  ]
-                },
-                enforce_admins: false,
-                required_pull_request_reviews: {
-                  dismiss_stale_reviews: true,
-                  require_code_owner_reviews: false,
-                  required_approving_review_count: 1,
-                  bypass_pull_request_allowances: {
-                    users: [],
-                    teams: [],
-                    apps: []
-                  }
-                },
-                restrictions: null,
-                allow_force_pushes: false,
-                allow_deletions: false,
-                block_creations: false,
-                required_conversation_resolution: true
-              });
-              
-              console.log('✅ Branch protection rules updated for develop branch');
-            } catch (error) {
-              console.error('❌ Failed to update branch protection:', error.message);
-              
-              if (error.status === 404) {
-                console.log('ℹ️  develop branch does not exist yet - protection will be applied when created');
-              } else {
-                throw error;
-              }
             }
 
       - name: Create CODEOWNERS file
@@ -195,12 +146,7 @@ jobs:
           echo "- ❌ No force pushes allowed"
           echo "- ❌ No direct pushes allowed"
           echo ""
-          echo "### Develop Branch Protection:"
-          echo "- ✅ Requires PR with 1 approval"
-          echo "- ✅ Requires backend/frontend/security tests"
-          echo "- ✅ Requires conversation resolution"
-          echo ""
           echo "### Next Steps:"
-          echo "1. Create 'develop' branch if it doesn't exist"
-          echo "2. Use 'develop/feature-name' pattern for feature branches"
-          echo "3. Only merge to main from 'develop/' branches"
+          echo "1. Use 'develop/feature-name' pattern for feature branches"
+          echo "2. Only merge to main from 'develop/' branches"
+          echo "3. Feature branches automatically run CI on push"

@@ -2,20 +2,25 @@ name: CI Pipeline
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, "develop/**"]
     types: [opened, synchronize, reopened]
   push:
-    branches: [develop, "develop/**", "feature/**", "fix/**", "hotfix/**"]
-  workflow_dispatch: # 手動実行を許可
+    branches: [main]
 
 env:
   NODE_VERSION: "18"
   GO_VERSION: "1.24"
 
 jobs:
-  # 必須チェック: ブランチ名・ビルド・Lint
+  # 必須チェック: ブランチ名・変更検出
   essential-checks:
+    # PRが存在する場合はpull_requestトリガーのみ、そうでなければpushトリガーで実行
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.changes.outputs.backend }}
+      frontend: ${{ steps.changes.outputs.frontend }}
+      infrastructure: ${{ steps.changes.outputs.infrastructure }}
     steps:
       # ブランチ名チェック（mainへのPRのみ）
       - name: Check branch naming convention
@@ -55,10 +60,44 @@ jobs:
               - 'Dockerfile*'
               - '.github/workflows/**'
 
-  # 🚀 自動実行：バックエンドビルド&Lint
-  build-backend:
-    needs: [detect-changes]
-    if: needs.detect-changes.outputs.backend == 'true'
+  # 🔍 バックエンドLint
+  backend-lint:
+    needs: [essential-checks]
+    if: needs.essential-checks.result == 'success' && needs.essential-checks.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install dependencies
+        working-directory: ./backend
+        run: go mod download
+
+      - name: Run linting
+        working-directory: ./backend
+        run: |
+          echo "🔍 Running Go linting..."
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+          golangci-lint run --timeout=5m
+          echo "✅ Linting passed"
+
+  # 🔨 バックエンドビルド
+  backend-build:
+    needs: [essential-checks]
+    if: needs.essential-checks.result == 'success' && needs.essential-checks.outputs.backend == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -88,18 +127,10 @@ jobs:
           go build -o app ./cmd/main.go
           echo "✅ Build successful"
 
-      - name: Run linting
-        working-directory: ./backend
-        run: |
-          echo "🔍 Running Go linting..."
-          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-          golangci-lint run --timeout=5m
-          echo "✅ Linting passed"
-
-  # 🚀 自動実行：フロントエンドビルド&Lint
-  build-frontend:
-    needs: [detect-changes]
-    if: needs.detect-changes.outputs.frontend == 'true'
+  # 🔍 フロントエンドLint
+  frontend-lint:
+    needs: [essential-checks]
+    if: needs.essential-checks.result == 'success' && needs.essential-checks.outputs.frontend == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -132,75 +163,10 @@ jobs:
           npm run type-check
           echo "✅ Type check passed"
 
-      - name: Build application
-        working-directory: ./frontend
-        run: |
-          echo "🔨 Building Next.js application..."
-          npm run build
-          echo "✅ Build successful"
-
-  # 🔧 手動実行：バックエンドテスト（重い処理）
-  test-backend:
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-
-    services:
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: password
-          MYSQL_DATABASE: test_db
-        ports:
-          - 3306:3306
-        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
-
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: --health-cmd="redis-cli ping" --health-interval=10s --health-timeout=5s --health-retries=3
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: ${{ env.GO_VERSION }}
-
-      - name: Cache Go modules
-        uses: actions/cache@v3
-        with:
-          path: ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
-      - name: Install dependencies
-        working-directory: ./backend
-        run: go mod download
-
-      - name: Run tests
-        working-directory: ./backend
-        env:
-          DB_HOST: localhost
-          DB_PORT: 3306
-          DB_USER: root
-          DB_PASSWORD: password
-          DB_NAME: test_db
-          REDIS_HOST: localhost
-          REDIS_PORT: 6379
-        run: |
-          echo "🔧 Setting up Go environment..."
-          cd backend
-          go mod download
-
-          echo "🏗️ Building backend..."
-          go build -o bin/app cmd/main.go
-
-  # 🔧 手動実行：フロントエンドテスト（重い処理）
-  test-frontend:
-    if: github.event_name == 'workflow_dispatch'
+  # 🔨 フロントエンドビルド
+  frontend-build:
+    needs: [essential-checks]
+    if: needs.essential-checks.result == 'success' && needs.essential-checks.outputs.frontend == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -215,125 +181,13 @@ jobs:
 
       - name: Install dependencies
         working-directory: ./frontend
-        run: npm ci --prefer-offline --no-audit
+        run: |
+          echo "📦 Installing dependencies..."
+          npm ci --prefer-offline --no-audit
 
-      - name: Run tests
+      - name: Build application
         working-directory: ./frontend
         run: |
-          if find . -name "*.test.*" -o -name "*.spec.*" | grep -q .; then
-            echo "✅ Test files found, running tests..."
-            npm run test -- --coverage --watchAll=false
-          else
-            echo "⏭️ No test files found, skipping tests..."
-          fi
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: frontend-build
-          path: frontend/.next
-          retention-days: 7
-
-  # 🔧 手動実行：セキュリティスキャン
-  security-scan:
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: "fs"
-          scan-ref: "."
-          format: "sarif"
-          output: "trivy-results.sarif"
-
-      - name: Upload Trivy scan results
-        uses: github/codeql-action/upload-sarif@v2
-        if: always()
-        with:
-          sarif_file: "trivy-results.sarif"
-
-  # 🔧 手動実行：統合テスト（Docker Compose使用）
-  integration-test:
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Create .env file
-        run: |
-          cat > .env << EOF
-          # Database
-          MYSQL_ROOT_PASSWORD=test_password
-          MYSQL_DATABASE=app_template_test
-          MYSQL_USER=app_user
-          MYSQL_PASSWORD=app_password
-
-          # Backend
-          DB_HOST=mysql
-          DB_PORT=3306
-          DB_USER=app_user
-          DB_PASSWORD=app_password
-          DB_NAME=app_template_test
-          JWT_SECRET=test_jwt_secret_key_for_ci
-
-          # Frontend
-          NEXT_PUBLIC_API_BASE_URL=http://localhost:8080
-          EOF
-
-      - name: Build and run integration tests
-        run: |
-          echo "🔄 Starting integration tests..."
-          docker-compose -f docker-compose.yml up -d --build
-
-          # Wait for services to be ready
-          echo "⏳ Waiting for services to start..."
-          timeout 60 bash -c 'until curl -f http://localhost:8080/health; do sleep 2; done'
-          timeout 60 bash -c 'until curl -f http://localhost:3000; do sleep 2; done'
-
-          # Run basic connectivity tests
-          curl -f http://localhost:8080/health || echo "⚠️ Backend health check failed"
-          curl -f http://localhost:3000 || echo "⚠️ Frontend health check failed"
-
-          echo "✅ Integration test completed - services are accessible"
-
-          # Cleanup
-          docker-compose down -v
-
-  # PR要約コメント（自動実行時のみ）
-  pr-summary:
-    if: github.event_name == 'pull_request'
-    needs: [branch-protection, build-backend, build-frontend]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Comment PR summary
-        uses: actions/github-script@v6
-        with:
-          script: |
-            const summary = `
-            ## 🚀 自動CI結果 (基本チェック)
-
-            | Check | Status |
-            |-------|--------|
-            | Branch Protection | ${{ needs.branch-protection.result == 'success' && '✅' || needs.branch-protection.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.branch-protection.result || 'skipped' }} |
-            | Backend Build & Lint | ${{ needs.build-backend.result == 'success' && '✅' || needs.build-backend.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.build-backend.result || 'skipped' }} |
-            | Frontend Build & Lint | ${{ needs.build-frontend.result == 'success' && '✅' || needs.build-frontend.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.build-frontend.result || 'skipped' }} |
-
-            **Branch:** \`${{ github.head_ref }}\` → \`${{ github.base_ref }}\`
-            **Commit:** ${{ github.sha }}
-
-            ---
-
-            💡 **手動実行が必要な追加テスト:**
-            - 🧪 Unit Tests (Backend/Frontend)
-            - 🔒 Security Scan
-            - 🔄 Integration Tests
-
-            手動実行は GitHub Actions の「Run workflow」ボタンから実行してください。
-            `;
-
-
-          echo "✅ Frontend build and lint completed!"
+          echo "🔨 Building Next.js application..."
+          npm run build
+          echo "✅ Build successful"

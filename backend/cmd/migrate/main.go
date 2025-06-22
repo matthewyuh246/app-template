@@ -3,8 +3,8 @@ package main
 import (
 	"database/sql"
 	"fmt"
-	"io/ioutil"
 	"log"
+	"os"
 	"path/filepath"
 	"sort"
 
@@ -116,7 +116,7 @@ func getExecutedMigrations(db *sql.DB) ([]string, error) {
 
 func executeMigration(db *sql.DB, filename string) error {
 	// マイグレーションファイルを読み込み
-	content, err := ioutil.ReadFile(filepath.Join("database/migrations", filename))
+	content, err := os.ReadFile(filepath.Join("database/migrations", filename))
 	if err != nil {
 		return err
 	}
